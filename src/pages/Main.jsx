@@ -1,15 +1,30 @@
 import axios from "axios";
 import { useEffect, useState } from "react";
-import { useNavigate, useLocation, Link } from "react-router-dom"; 
+import { useNavigate, Link } from "react-router-dom"; 
+import 'bootstrap/dist/css/bootstrap.min.css';
 
 function Main() {
-   
     const [notes, setNotes] = useState([]);
-    const [appointment, setAppointment] = useState({ date: '', time: '', service: 'Выбранное блюдо' });
     const [currentUser, setCurrentUser] = useState(null);
     const navigate = useNavigate();
-    const location = useLocation(); 
 
+   
+    const [mealType, setMealType] = useState('Завтрак'); 
+    const [productName, setProductName] = useState('');
+    const [weight, setWeight] = useState(100);
+    const [calories, setCalories] = useState('');
+    const [proteins, setProteins] = useState('');
+    const [fats, setFats] = useState('');
+    const [carbs, setCarbs] = useState('');
+
+    
+    const [serverProducts, setServerProducts] = useState([]); 
+    const [searchResults, setSearchResults] = useState([]); 
+    const [showSuggestions, setShowSuggestions] = useState(false); 
+    const [dailyGoal, setDailyGoal] = useState(2000);
+
+    const [showMealModal, setShowMealModal] = useState(false);
+    const [showGoalModal, setShowGoalModal] = useState(false);
     const API_URL = 'https://6a01fa240d92f63dd25323c7.mockapi.io/t/ad';
 
     useEffect(() => {
@@ -19,15 +34,26 @@ function Main() {
         } else {
             setCurrentUser(session);
             fetchNotes(session);
+            fetchServerProducts();
             
-           
-            if (location.state?.serviceName) {
-                setAppointment(prev => ({ ...prev, service: location.state.serviceName }));
-            }
+            const savedGoal = localStorage.getItem(`dailyGoal_${session}`);
+            if (savedGoal) setDailyGoal(Number(savedGoal));
         }
-    }, [navigate, location]);
+    }, [navigate]);
 
-  
+    const fetchServerProducts = async () => {
+        try {
+            const response = await axios.get(API_URL);
+            if (response.status === 200) {
+               
+                const items = response.data.filter(item => item.name && !item.username);
+                setServerProducts(items);
+            }
+        } catch (error) {
+            console.error("Ошибка при получении базы продуктов с сервера:", error);
+        }
+    };
+
     const fetchNotes = async (username) => {
         try {
             const response = await axios.get(API_URL);
@@ -35,28 +61,93 @@ function Main() {
                 const myNotes = response.data.filter(note => note.username === username);
                 setNotes(myNotes);
             }
-        } catch (error) { console.error(error); }
+        } catch (error) { 
+            console.error("Ошибка получения данных:", error); 
+        }
     }
+    const handleSearchChange = (value) => {
+        setProductName(value);
+        if (value.trim().length > 0) {
+            const filtered = serverProducts.filter(product => 
+                product.name.toLowerCase().includes(value.toLowerCase())
+            );
+            setSearchResults(filtered);
+            setShowSuggestions(true);
+        } else {
+            setSearchResults([]);
+            setShowSuggestions(false);
+        }
+    };
+    const handleSelectProduct = (product) => {
+        setProductName(product.name);
+        setCalories(product.calories || '');
+        setProteins(product.proteins || '');
+        setFats(product.fats || '');
+        setCarbs(product.carbs || '');
+        setWeight(100); 
+        setShowSuggestions(false); 
+    };
 
-    
-    const postAppointment = async (e) => {
+    const totalCals = notes.reduce((sum, item) => sum + (Number(item.calories) || 0), 0);
+    const totalProteins = notes.reduce((sum, item) => sum + (Number(item.proteins) || 0), 0);
+    const totalFats = notes.reduce((sum, item) => sum + (Number(item.fats) || 0), 0);
+    const totalCarbs = notes.reduce((sum, item) => sum + (Number(item.carbs) || 0), 0);
+    const progressPercent = Math.min((totalCals / dailyGoal) * 100, 100);
+
+    const openAddMeal = (type) => {
+        setMealType(type);
+        setProductName('');
+        setCalories('');
+        setProteins('');
+        setFats('');
+        setCarbs('');
+        setSearchResults([]);
+        setShowSuggestions(false);
+        setShowMealModal(true);
+        fetchServerProducts(); 
+    };
+
+    const handleAddMealSubmit = async (e) => {
         e.preventDefault();
-        if (!appointment.date || !appointment.time) return alert("Выберите дату и время доставки!");
+        if (!productName || !calories) return alert("Введите название и калорийность!");
+
+        const ratio = Number(weight) / 100;
+
         try {
             const response = await axios.post(API_URL, {
-                heading: `Заказ: ${appointment.service}`,
-                description: `Доставка на: ${appointment.date} в ${appointment.time}`,
                 username: currentUser,
-                date: appointment.date,
-                time: appointment.time
+                heading: mealType, 
+                description: `${productName} (${weight}г)`,
+                calories: Math.round(Number(calories) * ratio),
+                proteins: Number((Number(proteins || 0) * ratio).toFixed(1)),
+                fats: Number((Number(fats || 0) * ratio).toFixed(1)),
+                carbs: Number((Number(carbs || 0) * ratio).toFixed(1))
             });
+
             if (response.status === 201 || response.status === 200) {
-                alert("Заказ успешно оформлен!");
-                setAppointment({ date: '', time: '', service: 'Выбранное блюдо' });
+                setShowMealModal(false);
                 fetchNotes(currentUser);
             }
-        } catch (error) { console.error(error); }
-    }
+        } catch (error) {
+            console.error(error);
+        }
+    };
+
+    const handleSaveGoal = (e) => {
+        e.preventDefault();
+        localStorage.setItem(`dailyGoal_${currentUser}`, dailyGoal);
+        setShowGoalModal(false);
+    };
+
+    const handleDeleteItem = async (id) => {
+        if (!window.confirm("Удалить эту запись?")) return;
+        try {
+            await axios.delete(`${API_URL}/${id}`);
+            fetchNotes(currentUser);
+        } catch (error) {
+            console.error(error);
+        }
+    };
 
     const handleLogout = () => {
         localStorage.removeItem('session');
@@ -64,97 +155,209 @@ function Main() {
     };
 
     return (
-        <div style={{ backgroundColor: "#fdfaf5", minHeight: "100vh", padding: "40px 20px" }}>
-            <div className="container" style={{ maxWidth: '700px', margin: '0 auto' }}>
-                
-             
-                <div className="d-flex justify-content-between align-items-center mb-5">
-                    <div>
-                        <h2 style={{ fontFamily: 'Playfair Display', fontWeight: 'bold' }}>Bella <span style={{color: '#c5a059'}}>Ristorante</span></h2>
-                        {currentUser && <small className="text-muted">Аккаунт: <b>{currentUser}</b></small>}
+        <div style={{ backgroundColor: "#edf7f2", minHeight: "100vh", fontFamily: "system-ui, sans-serif", paddingBottom: "60px" }}>
+          
+            <div className="container py-3 d-flex justify-content-between align-items-center" style={{ maxWidth: "700px" }}>
+                <div>
+                    <span className="badge bg-white text-success shadow-sm p-2 rounded-pill">🍎 Счётчик калорий</span>
+                </div>
+                {currentUser && (
+                    <div className="d-flex align-items-center gap-2 bg-white px-3 py-1 rounded-pill shadow-sm">
+                        <small className="text-muted">👤 {currentUser}</small>
+                        <button onClick={handleLogout} className="btn btn-sm btn-link text-danger text-decoration-none p-0 ms-2" style={{ fontSize: "12px" }}>Выйти</button>
                     </div>
-                    <div className="d-flex gap-2">
-                        <Link to="/products" className="btn btn-sm btn-outline-dark rounded-pill px-3">Вернуться в меню</Link>
-                        <button onClick={handleLogout} className="btn btn-sm btn-danger rounded-pill px-3">Выйти</button>
+                )}
+            </div>
+
+            <div className="container" style={{ maxWidth: '650px', margin: '0 auto' }}>
+            
+                <div className="card p-4 text-white mb-3 shadow-sm" style={{ background: "linear-gradient(135deg, #2ecc71, #27ae60)", borderRadius: "24px", border: "none" }}>
+                    <div className="d-flex justify-content-between align-items-center mb-2">
+                        <div>
+                            <small className="opacity-75 text-uppercase fw-bold" style={{ fontSize: '11px', letterSpacing: '0.5px' }}>Дневная цель</small>
+                            <h2 className="fw-bold m-0">{totalCals} / {dailyGoal} ккал</h2>
+                        </div>
+                        <button className="btn btn-light btn-sm rounded-pill fw-bold text-success px-3" onClick={() => setShowGoalModal(true)}>
+                            🎯 Цель
+                        </button>
                     </div>
+                 
+                    <div className="progress bg-white bg-opacity-25 my-3" style={{ height: "12px", borderRadius: "6px" }}>
+                        <div className="progress-bar bg-white" style={{ width: `${progressPercent}%`, borderRadius: "6px" }}></div>
+                    </div>
+                    <small className="opacity-75">Осталось: {Math.max(dailyGoal - totalCals, 0)} ккал</small>
                 </div>
 
-              
-                <div className="card p-4 shadow-sm mb-5" style={{ borderRadius: '25px', border: 'none', background: '#fff' }}>
-                    <h4 className="mb-4" style={{ fontWeight: 'bold' }}>Оформление заказа</h4>
-                    <form onSubmit={postAppointment}>
-                        <div className="mb-3">
-                            <label className="form-label small fw-bold text-uppercase" style={{ letterSpacing: '1px' }}>Блюдо</label>
-                            <input 
-                                type="text" 
-                                className="form-control form-control-lg bg-light" 
-                                style={{ borderRadius: '12px', border: 'none' }}
-                                value={appointment.service} 
-                                onChange={(e) => setAppointment({...appointment, service: e.target.value})}
-                            />
+                <div className="row g-2 mb-4 text-center">
+                    <div className="col-4">
+                        <div className="bg-white p-3 shadow-sm rounded-4">
+                            <div className="text-muted small">Белки</div>
+                            <span className="fw-bold text-primary">{totalProteins.toFixed(1)} г</span>
                         </div>
-                        
-                        <div className="row">
-                            <div className="col-md-6 mb-3">
-                                <label className="form-label small fw-bold text-uppercase">Дата доставки</label>
-                                <input 
-                                    type="date" 
-                                    className="form-control form-control-lg" 
-                                    style={{ borderRadius: '12px' }}
-                                    value={appointment.date} 
-                                    onChange={(e) => setAppointment({ ...appointment, date: e.target.value })} 
-                                    required 
-                                />
-                            </div>
-                            <div className="col-md-6 mb-3">
-                                <label className="form-label small fw-bold text-uppercase">Время</label>
-                                <input 
-                                    type="time" 
-                                    className="form-control form-control-lg" 
-                                    style={{ borderRadius: '12px' }}
-                                    value={appointment.time} 
-                                    onChange={(e) => setAppointment({ ...appointment, time: e.target.value })} 
-                                    required 
-                                />
-                            </div>
+                    </div>
+                    <div className="col-4">
+                        <div className="bg-white p-3 shadow-sm rounded-4">
+                            <div className="text-muted small">Жиры</div>
+                            <span className="fw-bold text-warning">{totalFats.toFixed(1)} г</span>
                         </div>
-                        
-                        <button type="submit" className="btn btn-dark w-100 fw-bold py-3 mt-3 shadow" style={{ borderRadius: '15px', backgroundColor: '#1a1a1a' }}>
-                            ПОДТВЕРДИТЬ ЗАКАЗ
-                        </button>
-                    </form>
+                    </div>
+                    <div className="col-4">
+                        <div className="bg-white p-3 shadow-sm rounded-4">
+                            <div className="text-muted small">Углеводы</div>
+                            <span className="fw-bold text-danger">{totalCarbs.toFixed(1)} г</span>
+                        </div>
+                    </div>
                 </div>
 
                
-                <div className="history">
-                    <h5 className="mb-4" style={{ fontWeight: 'bold', display: 'flex', alignItems: 'center' }}>
-                        <span style={{ width: '30px', height: '2px', background: '#c5a059', marginRight: '10px' }}></span>
-                        История ваших заказов
-                    </h5>
-                    
-                    {notes.length > 0 ? (
-                        <div className="row g-3">
-                            {notes.slice().reverse().map((item) => (
-                                <div className="col-12" key={item.id}>
-                                    <div className="card p-3 shadow-sm" style={{ borderRadius: '15px', border: 'none', borderLeft: '6px solid #c5a059' }}>
-                                        <div className="d-flex justify-content-between align-items-center">
+                {['Завтрак', 'Обед', 'Ужин', 'Перекус'].map((type) => {
+                    const mealsOfType = notes.filter(n => n.heading === type);
+                    const calsOfType = mealsOfType.reduce((s, i) => s + Number(i.calories), 0);
+
+                    return (
+                        <div key={type} className="bg-white p-3 rounded-4 shadow-sm mb-3">
+                            <div className="d-flex justify-content-between align-items-center mb-2">
+                                <div className="d-flex align-items-center gap-2">
+                                    <h5 className="m-0 fw-bold">{type}</h5>
+                                    {calsOfType > 0 && <span className="badge bg-light text-muted">{calsOfType} ккал</span>}
+                                </div>
+                               
+                                <button className="btn btn-success btn-sm rounded-circle d-flex align-items-center justify-content-center" style={{ width: '28px', height: '28px' }} onClick={() => openAddMeal(type)}>
+                                    +
+                                </button>
+                            </div>
+
+                            {mealsOfType.length > 0 ? (
+                                <div className="border-top pt-2 mt-2">
+                                    {mealsOfType.map(meal => (
+                                        <div key={meal.id} className="d-flex justify-content-between align-items-center py-2 border-bottom border-light">
                                             <div>
-                                                <div className="fw-bold fs-5" style={{ color: '#1a1a1a' }}>{item.heading}</div>
-                                                <div className="text-muted small">{item.description}</div>
+                                                <div className="fw-bold text-dark" style={{ fontSize: '14px' }}>{meal.description}</div>
+                                                <small className="text-muted" style={{ fontSize: '11px' }}>
+                                                    Б: {meal.proteins}г | Ж: {meal.fats}г | У: {meal.carbs}г
+                                                </small>
                                             </div>
-                                            <span className="badge bg-light text-dark border rounded-pill px-3 py-2">Готовится</span>
+                                            <div className="d-flex align-items-center gap-3">
+                                                <span className="fw-bold text-success">{meal.calories} ккал</span>
+                                                <button className="btn btn-sm btn-link text-danger p-0 text-decoration-none" onClick={() => handleDeleteItem(meal.id)}>🗑️</button>
+                                            </div>
+                                        </div>
+                                    ))}
+                                </div>
+                            ) : (
+                                <small className="text-muted d-block py-1">Записей нет</small>
+                            )}
+                        </div>
+                    );
+                })}
+            </div>
+
+            {showMealModal && (
+                <div className="modal d-block" style={{ background: "rgba(0,0,0,0.5)", backdropFilter: "blur(4px)", zIndex: 1050 }}>
+                    <div className="modal-dialog modal-dialog-centered" style={{ maxWidth: '450px' }}>
+                        <div className="modal-content border-none shadow" style={{ borderRadius: '24px' }}>
+                            <div className="modal-header border-0 pb-0">
+                                <h5 className="modal-title fw-bold">Добавить в {mealType}</h5>
+                                <button type="button" className="btn-close" onClick={() => setShowMealModal(false)}></button>
+                            </div>
+                            <form onSubmit={handleAddMealSubmit}>
+                                <div className="modal-body">
+                                
+                                    <div className="mb-3 position-relative">
+                                        <label className="form-label small fw-bold text-muted">Поиск продукта (из MockAPI) *</label>
+                                        <input 
+                                            type="text" 
+                                            className="form-control" 
+                                            placeholder="Начните вводить: Йогурт, Сыр..." 
+                                            value={productName} 
+                                            onChange={e => handleSearchChange(e.target.value)} 
+                                            autoComplete="off"
+                                            required 
+                                        />
+                                     
+                                        {showSuggestions && searchResults.length > 0 && (
+                                            <ul className="list-group position-absolute w-100 shadow mt-1" style={{ zIndex: 1100, maxHeight: '200px', overflowY: 'auto', borderRadius: '12px' }}>
+                                                {searchResults.map((product) => (
+                                                    <li 
+                                                        key={product.id} 
+                                                        className="list-group-item list-group-item-action d-flex justify-content-between align-items-center" 
+                                                        style={{ cursor: 'pointer', fontSize: '14px' }}
+                                                        onClick={() => handleSelectProduct(product)}
+                                                    >
+                                                        <span><strong>{product.name}</strong></span>
+                                                        <span className="badge bg-success rounded-pill">{product.calories} ккал</span>
+                                                    </li>
+                                                ))}
+                                            </ul>
+                                        )}
+                                        {showSuggestions && searchResults.length === 0 && (
+                                            <ul className="list-group position-absolute w-100 shadow mt-1" style={{ zIndex: 1100 }}>
+                                                <li className="list-group-item text-muted small">Ничего не найдено. Введите вручную ниже.</li>
+                                            </ul>
+                                        )}
+                                    </div>
+
+                                    <div className="row">
+                                        <div className="col-6 mb-3">
+                                            <label className="form-label small fw-bold text-muted">Порция (грамм)</label>
+                                            <input type="number" className="form-control" value={weight} onChange={e => setWeight(e.target.value)} required />
+                                        </div>
+                                        <div className="col-6 mb-3">
+                                            <label className="form-label small fw-bold text-muted">Калории (на 100г) *</label>
+                                            <input type="number" className="form-control" value={calories} onChange={e => setCalories(e.target.value)} required />
+                                        </div>
+                                    </div>
+                                    <div className="row text-center">
+                                        <div className="col-4">
+                                            <label className="form-label small text-muted">Белки (г)</label>
+                                            <input type="number" step="0.1" className="form-control form-control-sm" value={proteins} onChange={e => setProteins(e.target.value)} />
+                                        </div>
+                                        <div className="col-4">
+                                            <label className="form-label small text-muted">Жиры (г)</label>
+                                            <input type="number" step="0.1" className="form-control form-control-sm" value={fats} onChange={e => setFats(e.target.value)} />
+                                        </div>
+                                        <div className="col-4">
+                                            <label className="form-label small text-muted">Углеводы (г)</label>
+                                            <input type="number" step="0.1" className="form-control form-control-sm" value={carbs} onChange={e => setCarbs(e.target.value)} />
                                         </div>
                                     </div>
                                 </div>
-                            ))}
+                                <div className="modal-footer border-0 pt-0">
+                                    <button type="submit" className="btn btn-success w-100 py-2 fw-bold" style={{ borderRadius: '14px' }}>Добавить</button>
+                                </div>
+                            </form>
                         </div>
-                    ) : (
-                        <div className="text-center p-5 bg-white shadow-sm" style={{ borderRadius: '20px' }}>
-                            <p className="text-muted mb-0">У вас пока нет активных заказов.</p>
-                        </div>
-                    )}
+                    </div>
                 </div>
-            </div>
+            )}
+
+            {showGoalModal && (
+                <div className="modal d-block" style={{ background: "rgba(0,0,0,0.5)" }}>
+                    <div className="modal-dialog modal-dialog-centered" style={{ maxWidth: '350px' }}>
+                        <div className="modal-content" style={{ borderRadius: '20px' }}>
+                            <div className="modal-header border-0 pb-0">
+                                <h5 className="modal-title fw-bold">Дневная цель</h5>
+                                <button type="button" className="btn-close" onClick={() => setShowGoalModal(false)}></button>
+                            </div>
+                            <form onSubmit={handleSaveGoal}>
+                                <div className="modal-body">
+                                    <label className="form-label small text-muted">Калории в день</label>
+                                    <input type="number" className="form-control form-control-lg" value={dailyGoal} onChange={e => setDailyGoal(Number(e.target.value))} required />
+                                    <div className="bg-light p-2 rounded-3 mt-3" style={{ fontSize: '11px' }}>
+                                        💡 Рекомендации:<br/>
+                                        • Женщины: 1800-2200 ккал<br/>
+                                        • Мужчины: 2200-2500 ккал
+                                    </div>
+                                </div>
+                                <div className="modal-footer border-0">
+                                    <button type="submit" className="btn btn-success w-100" style={{ borderRadius: '12px' }}>Сохранить</button>
+                                </div>
+                            </form>
+                        </div>
+                    </div>
+                </div>
+            )}
+
         </div>
     );
 }
